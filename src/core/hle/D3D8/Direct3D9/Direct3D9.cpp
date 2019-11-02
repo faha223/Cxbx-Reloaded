@@ -61,7 +61,7 @@ namespace xboxkrnl
 #include "core\kernel\common\strings.hpp" // For uem_str
 #include "common\input\SdlJoystick.h"
 #include "common/util/strConverter.hpp" // for utf8_to_utf16
-
+#include "common/EmuEEPROM.h"
 #include <assert.h>
 #include <process.h>
 #include <clocale>
@@ -5021,12 +5021,46 @@ DWORD WINAPI XTL::EMUPATCH(D3DDevice_Swap)
 		auto pXboxBackBufferHostSurface = GetHostSurface(g_XboxBackBufferSurface, D3DUSAGE_RENDERTARGET);
 		if (pXboxBackBufferHostSurface) {
 			// Blit Xbox BackBuffer to host BackBuffer
-			// TODO: Respect aspect ratio
+
+			// Respect aspect ratio
+			RECT destRect = { 0, 0, BackBufferDesc.Width, BackBufferDesc.Height };
+			float srcAR = (float)GetPixelContainerWidth(g_XboxBackBufferSurface) / GetPixelContainerHeight(g_XboxBackBufferSurface);
+			float destAR = (float)destRect.right / destRect.bottom;
+
+			// Because some games will use a 16:9 aspect ratio in content but not in resolution, this is a workaround to support those titles correctly
+			// If the title is 4:3 even with widescreen specified, then setting this to Normal in the EEPROM will display it scaled correctly.
+			if (EEPROM->UserSettings.VideoFlags & AV_FLAGS_WIDESCREEN)
+			{
+				srcAR = 16.0f / 9.0f;
+			}
+
+			// If the internal rendering resolution doesn't match the window resolution, scale and center the destination rectangle to maintain aspect ratio
+			if (srcAR != destAR)
+			{
+				if (srcAR > destAR)
+				{
+					// src is wider than dest, change height
+					auto h = destRect.right / srcAR;
+					destRect.top = (destRect.bottom - h) / 2;
+					destRect.bottom = destRect.top + h;
+				}
+				else
+				{
+					// src is taller than dest, change width
+					auto w = srcAR * destRect.bottom;
+					destRect.left = (destRect.right - w) / 2;
+					destRect.right = destRect.left + w;
+				}
+
+				// If the destRect doesn't match the backbuffer, we need to clear the whole backbuffer
+				g_pD3DDevice->ColorFill(pCurrentHostBackBuffer, nullptr, D3DCOLOR_COLORVALUE(0, 0, 0, 1));
+			}
+
             hRet = g_pD3DDevice->StretchRect(
                 /* pSourceSurface = */ pXboxBackBufferHostSurface,
                 /* pSourceRect = */ nullptr,
                 /* pDestSurface = */ pCurrentHostBackBuffer,
-                /* pDestRect = */ nullptr,
+                /* pDestRect = */ &destRect,
                 /* Filter = */ LoadSurfaceFilter
             );
 		
